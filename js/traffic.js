@@ -1,7 +1,8 @@
 var colorDead,
   colorAcci,
+  colorDui,
   colorDeadScale,
-  colorAcciScale,
+  colorAcciDuiScale,
   genderMap,
   injurySeverityMap,
   injuryPositionMap,
@@ -50,11 +51,14 @@ var colorDead,
   laneDivideSideMap,
   edgeLineMap,
   accidentTypeMap,
-  causeCodeMap;
+  causeCodeMap,
+  isDuiCase,
+  buildAlcoholGroup;
 colorDead = "#de2d26";
 colorAcci = "rgb(255, 204, 0)";
+colorDui = "#ff7f0e";
 colorDeadScale = d3.scale.ordinal().range([colorDead]);
-colorAcciScale = d3.scale.ordinal().range([colorAcci]);
+colorAcciDuiScale = d3.scale.ordinal().range([colorAcci, colorDui]);
 lngDim = null;
 latDim = null;
 weekDayTable = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"];
@@ -547,6 +551,34 @@ decodeCode = function (value, map, len) {
   }
   return map[normalized] || map[+normalized] || "未提供";
 };
+isDuiCase = function (drinkingValue) {
+  var numericValue;
+  numericValue = parseFloat(drinkingValue);
+  return !isNaN(numericValue) && numericValue >= 4 && numericValue <= 8;
+};
+buildAlcoholGroup = function (dimension) {
+  return dimension.group().reduce(
+    function (p, v) {
+      if (v.isDui) {
+        p.dui += 1;
+      } else {
+        p.nonDui += 1;
+      }
+      return p;
+    },
+    function (p, v) {
+      if (v.isDui) {
+        p.dui -= 1;
+      } else {
+        p.nonDui -= 1;
+      }
+      return p;
+    },
+    function () {
+      return { dui: 0, nonDui: 0 };
+    }
+  );
+};
 setCircle = function (it) {
   return it
     .attr({
@@ -565,6 +597,18 @@ setCircle = function (it) {
         return ifdead(it, colorDead, colorAcci);
       },
       position: "absolute",
+      stroke: function (it) {
+        if (it.isDui) {
+          return colorDui;
+        }
+        return "none";
+      },
+      "stroke-width": function (it) {
+        if (it.isDui) {
+          return 1.5;
+        }
+        return 0;
+      },
       opacity: function (it) {
         return ifdead(it, 1, 0.3);
       },
@@ -665,6 +709,7 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     d.actionStatus = decodeCode(d["當事者行動狀態"], actionStatusMap, 2);
     d.phoneUse = decodeCode(d["行動電話"], phoneUseMap, 1);
     d.drinkingStatus = decodeCode(d["飲酒情形"], drinkingMap, 1);
+    d.isDui = isDuiCase(d["飲酒情形"]);
     d.protectiveGear = decodeCode(d["保護裝置"], protectiveGearMap, 1);
     d.mainCause = decodeCode(d["肇因碼-主要"], causeCodeMap, 2);
     d.hitAndRun = decodeCode(d["個人肇逃否"], hitAndRunMap, 1);
@@ -716,9 +761,9 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     return it.date;
   });
   initMap();
-  acciMonth = monthDim.group().reduceCount();
-  acciWeekDay = weekdayDim.group().reduceCount();
-  acciHour = hourDim.group().reduceCount();
+  acciMonth = buildAlcoholGroup(monthDim);
+  acciWeekDay = buildAlcoholGroup(weekdayDim);
+  acciHour = buildAlcoholGroup(hourDim);
   deathMonth = monthDim.group().reduceSum(function (it) {
     return it.dead;
   });
@@ -786,14 +831,24 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     .ticks(3);
   barAcciMonth
     .width(barMt)
-    .height(100)
+    .height(120)
     .margins(marginMt)
     .dimension(monthDim)
-    .group(acciMonth)
+    .group(acciMonth, "非酒駕")
+    .valueAccessor(function (d) {
+      return d.value.nonDui;
+    })
+    .stack(acciMonth, "酒駕", function (d) {
+      return d.value.dui;
+    })
     .x(d3.scale.ordinal().domain(d3.range(1, 13)))
     .xUnits(dc.units.ordinal)
     .elasticY(true)
-    .colors(colorAcciScale)
+    .colors(colorAcciDuiScale)
+    .colorAccessor(function (d) {
+      return d.layer;
+    })
+    .legend(dc.legend().x(barMt - 150).y(10).itemHeight(12).gap(6))
     .on("filtered", function (c, f) {
       return updateGraph();
     })
@@ -801,15 +856,25 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     .ticks(4);
   barAcciWeekDay
     .width(barWk)
-    .height(100)
+    .height(120)
     .margins(marginWk)
     .dimension(weekdayDim)
-    .group(acciWeekDay)
+    .group(acciWeekDay, "非酒駕")
+    .valueAccessor(function (d) {
+      return d.value.nonDui;
+    })
+    .stack(acciWeekDay, "酒駕", function (d) {
+      return d.value.dui;
+    })
     .x(d3.scale.ordinal().domain(weekDayTable))
     .xUnits(dc.units.ordinal)
     .elasticY(true)
     .gap(4)
-    .colors(colorAcciScale)
+    .colors(colorAcciDuiScale)
+    .colorAccessor(function (d) {
+      return d.layer;
+    })
+    .legend(dc.legend().x(barWk - 150).y(10).itemHeight(12).gap(6))
     .on("filtered", function (c, f) {
       return updateGraph();
     })
@@ -817,13 +882,23 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     .ticks(4);
   barAcciHour
     .width(barHr)
-    .height(100)
+    .height(120)
     .margins(marginHr)
     .dimension(hourDim)
-    .group(acciHour)
+    .group(acciHour, "非酒駕")
+    .valueAccessor(function (d) {
+      return d.value.nonDui;
+    })
+    .stack(acciHour, "酒駕", function (d) {
+      return d.value.dui;
+    })
     .x(d3.scale.linear().domain([0, 24]))
     .elasticY(true)
-    .colors(colorAcciScale)
+    .colors(colorAcciDuiScale)
+    .colorAccessor(function (d) {
+      return d.layer;
+    })
+    .legend(dc.legend().x(barHr - 190).y(10).itemHeight(12).gap(6))
     .on("filtered", function (c, f) {
       return updateGraph();
     })
