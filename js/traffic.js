@@ -1,5 +1,6 @@
 var colorDead,
   colorAcci,
+  colorAcciDui,
   colorDeadScale,
   colorAcciScale,
   genderMap,
@@ -28,6 +29,7 @@ var colorDead,
   setCircle,
   initCircle,
   tranCircle,
+  buildDrinkingGroup,
   updateGraph,
   dataTable,
   dataTableDim,
@@ -53,8 +55,9 @@ var colorDead,
   causeCodeMap;
 colorDead = "#de2d26";
 colorAcci = "rgb(255, 204, 0)";
+colorAcciDui = "#ff6b6b";
 colorDeadScale = d3.scale.ordinal().range([colorDead]);
-colorAcciScale = d3.scale.ordinal().range([colorAcci]);
+colorAcciScale = d3.scale.ordinal().range([colorAcci, colorAcciDui]);
 lngDim = null;
 latDim = null;
 weekDayTable = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"];
@@ -554,11 +557,14 @@ setCircle = function (it) {
         return map.latLngToLayerPoint([it.GoogleLat, it.GoogleLng]).x;
       },
       cy: function (it) {
-        return map.latLngToLayerPoint([it.GoogleLat, it.GoogleLng]).y;
+  return map.latLngToLayerPoint([it.GoogleLat, it.GoogleLng]).y;
       },
       r: function (it) {
         return ifdead(it, "5px", "2.5px");
       },
+    })
+    .classed("dui-circle", function (it) {
+      return it.isDUI;
     })
     .style({
       fill: function (it) {
@@ -582,6 +588,32 @@ tranCircle = function (it) {
     },
   });
 };
+buildDrinkingGroup = function (dimension) {
+  return dimension.group().reduce(
+    function (p, v) {
+      if (v.isDUI) {
+        p.dui += 1;
+      } else {
+        p.nonDui += 1;
+      }
+      return p;
+    },
+    function (p, v) {
+      if (v.isDUI) {
+        p.dui -= 1;
+      } else {
+        p.nonDui -= 1;
+      }
+      return p;
+    },
+    function () {
+      return {
+        dui: 0,
+        nonDui: 0,
+      };
+    }
+  );
+};
 updateGraph = function () {
   var dt;
   dt = gPrints.selectAll("circle").data(monthDim.top(Infinity));
@@ -598,9 +630,11 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     barAcciWeekDay,
     ndx,
     all,
-    acciMonth,
+    acciMonthByDrinking,
     acciWeekDay,
+    acciWeekDayByDrinking,
     acciHour,
+    acciHourByDrinking,
     deathMonth,
     deathWeekDay,
     deathHour,
@@ -664,6 +698,7 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     d.accidentType = decodeCode(d["事故類型及型態"], accidentTypeMap, 2);
     d.actionStatus = decodeCode(d["當事者行動狀態"], actionStatusMap, 2);
     d.phoneUse = decodeCode(d["行動電話"], phoneUseMap, 1);
+    d.isDUI = +d["飲酒情形"] >= 4 && +d["飲酒情形"] <= 8;
     d.drinkingStatus = decodeCode(d["飲酒情形"], drinkingMap, 1);
     d.protectiveGear = decodeCode(d["保護裝置"], protectiveGearMap, 1);
     d.mainCause = decodeCode(d["肇因碼-主要"], causeCodeMap, 2);
@@ -716,9 +751,11 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     return it.date;
   });
   initMap();
-  acciMonth = monthDim.group().reduceCount();
+  acciMonthByDrinking = buildDrinkingGroup(monthDim);
   acciWeekDay = weekdayDim.group().reduceCount();
+  acciWeekDayByDrinking = buildDrinkingGroup(weekdayDim);
   acciHour = hourDim.group().reduceCount();
+  acciHourByDrinking = buildDrinkingGroup(hourDim);
   deathMonth = monthDim.group().reduceSum(function (it) {
     return it.dead;
   });
@@ -789,7 +826,12 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     .height(100)
     .margins(marginMt)
     .dimension(monthDim)
-    .group(acciMonth)
+    .group(acciMonthByDrinking, "非酒駕", function (d) {
+      return d.value.nonDui;
+    })
+    .stack(acciMonthByDrinking, "酒駕", function (d) {
+      return d.value.dui;
+    })
     .x(d3.scale.ordinal().domain(d3.range(1, 13)))
     .xUnits(dc.units.ordinal)
     .elasticY(true)
@@ -797,6 +839,15 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     .on("filtered", function (c, f) {
       return updateGraph();
     })
+    .legend(
+      dc
+        .legend()
+        .x(200)
+        .y(5)
+        .itemHeight(12)
+        .gap(4)
+        .horizontal(true)
+    )
     .yAxis()
     .ticks(4);
   barAcciWeekDay
@@ -804,7 +855,12 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     .height(100)
     .margins(marginWk)
     .dimension(weekdayDim)
-    .group(acciWeekDay)
+    .group(acciWeekDayByDrinking, "非酒駕", function (d) {
+      return d.value.nonDui;
+    })
+    .stack(acciWeekDayByDrinking, "酒駕", function (d) {
+      return d.value.dui;
+    })
     .x(d3.scale.ordinal().domain(weekDayTable))
     .xUnits(dc.units.ordinal)
     .elasticY(true)
@@ -820,7 +876,12 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     .height(100)
     .margins(marginHr)
     .dimension(hourDim)
-    .group(acciHour)
+    .group(acciHourByDrinking, "非酒駕", function (d) {
+      return d.value.nonDui;
+    })
+    .stack(acciHourByDrinking, "酒駕", function (d) {
+      return d.value.dui;
+    })
     .x(d3.scale.linear().domain([0, 24]))
     .elasticY(true)
     .colors(colorAcciScale)
