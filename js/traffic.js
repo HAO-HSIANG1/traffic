@@ -1,7 +1,8 @@
 var colorDead,
   colorAcci,
+  colorDrunk,
   colorDeadScale,
-  colorAcciScale,
+  colorDrinkingScale,
   genderMap,
   injurySeverityMap,
   injuryPositionMap,
@@ -23,6 +24,9 @@ var colorDead,
   hourDim,
   map,
   barAcciHour,
+  acciMonthByDrinking,
+  acciWeekDayByDrinking,
+  acciHourByDrinking,
   initMap,
   ifdead,
   setCircle,
@@ -33,6 +37,7 @@ var colorDead,
   dataTableDim,
   formatDateTime,
   decodeCode,
+  getDrinkingCategory,
   weatherMap,
   lightMap,
   roadCategoryMap,
@@ -54,7 +59,12 @@ var colorDead,
 colorDead = "#de2d26";
 colorAcci = "rgb(255, 204, 0)";
 colorDeadScale = d3.scale.ordinal().range([colorDead]);
-colorAcciScale = d3.scale.ordinal().range([colorAcci]);
+colorDrunk = "#a50f15";
+colorDrinkingScale = d3
+  .scale
+  .ordinal()
+  .domain(["非酒駕", "酒駕"])
+  .range([colorAcci, colorDrunk]);
 lngDim = null;
 latDim = null;
 weekDayTable = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"];
@@ -547,6 +557,26 @@ decodeCode = function (value, map, len) {
   }
   return map[normalized] || map[+normalized] || "未提供";
 };
+getDrinkingCategory = function (value) {
+  var normalized;
+  if (value == null || value === "") {
+    return "非酒駕";
+  }
+  normalized = value.toString().trim();
+  if (!normalized) {
+    return "非酒駕";
+  }
+  if (normalized.length < 1) {
+    return "非酒駕";
+  }
+  if (!isNaN(+normalized)) {
+    normalized = +normalized;
+  }
+  if (+normalized >= 4 && +normalized <= 8) {
+    return "酒駕";
+  }
+  return "非酒駕";
+};
 setCircle = function (it) {
   return it
     .attr({
@@ -598,9 +628,9 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     barAcciWeekDay,
     ndx,
     all,
-    acciMonth,
-    acciWeekDay,
-    acciHour,
+    acciMonthByDrinking,
+    acciWeekDayByDrinking,
+    acciHourByDrinking,
     deathMonth,
     deathWeekDay,
     deathHour,
@@ -610,6 +640,9 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     marginMt,
     marginWk,
     marginHr,
+    reduceDrinkingInit,
+    reduceDrinkingAdd,
+    reduceDrinkingRemove,
     navls,
     navidx,
     nav;
@@ -665,6 +698,7 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     d.actionStatus = decodeCode(d["當事者行動狀態"], actionStatusMap, 2);
     d.phoneUse = decodeCode(d["行動電話"], phoneUseMap, 1);
     d.drinkingStatus = decodeCode(d["飲酒情形"], drinkingMap, 1);
+    d.drinkingCategory = getDrinkingCategory(d["飲酒情形"]);
     d.protectiveGear = decodeCode(d["保護裝置"], protectiveGearMap, 1);
     d.mainCause = decodeCode(d["肇因碼-主要"], causeCodeMap, 2);
     d.hitAndRun = decodeCode(d["個人肇逃否"], hitAndRunMap, 1);
@@ -715,10 +749,35 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
   dataTableDim = ndx.dimension(function (it) {
     return it.date;
   });
+  reduceDrinkingInit = function () {
+    return { sober: 0, drunk: 0 };
+  };
+  reduceDrinkingAdd = function (p, v) {
+    if (v.drinkingCategory === "酒駕") {
+      p.drunk += 1;
+    } else {
+      p.sober += 1;
+    }
+    return p;
+  };
+  reduceDrinkingRemove = function (p, v) {
+    if (v.drinkingCategory === "酒駕") {
+      p.drunk -= 1;
+    } else {
+      p.sober -= 1;
+    }
+    return p;
+  };
   initMap();
-  acciMonth = monthDim.group().reduceCount();
-  acciWeekDay = weekdayDim.group().reduceCount();
-  acciHour = hourDim.group().reduceCount();
+  acciMonthByDrinking = monthDim
+    .group()
+    .reduce(reduceDrinkingAdd, reduceDrinkingRemove, reduceDrinkingInit);
+  acciWeekDayByDrinking = weekdayDim
+    .group()
+    .reduce(reduceDrinkingAdd, reduceDrinkingRemove, reduceDrinkingInit);
+  acciHourByDrinking = hourDim
+    .group()
+    .reduce(reduceDrinkingAdd, reduceDrinkingRemove, reduceDrinkingInit);
   deathMonth = monthDim.group().reduceSum(function (it) {
     return it.dead;
   });
@@ -789,14 +848,26 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     .height(100)
     .margins(marginMt)
     .dimension(monthDim)
-    .group(acciMonth)
+    .group(acciMonthByDrinking, "非酒駕")
+    .valueAccessor(function (d) {
+      return d.value.sober;
+    })
+    .stack(acciMonthByDrinking, "酒駕", function (d) {
+      return d.value.drunk;
+    })
     .x(d3.scale.ordinal().domain(d3.range(1, 13)))
     .xUnits(dc.units.ordinal)
     .elasticY(true)
-    .colors(colorAcciScale)
+    .colors(colorDrinkingScale)
+    .colorAccessor(function (d) {
+      return d.layer || "非酒駕";
+    })
     .on("filtered", function (c, f) {
       return updateGraph();
     })
+    .legend(
+      dc.legend().x(barMt - 90).y(0).itemHeight(10).gap(5).horizontal(true)
+    )
     .yAxis()
     .ticks(4);
   barAcciWeekDay
@@ -804,15 +875,27 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     .height(100)
     .margins(marginWk)
     .dimension(weekdayDim)
-    .group(acciWeekDay)
+    .group(acciWeekDayByDrinking, "非酒駕")
+    .valueAccessor(function (d) {
+      return d.value.sober;
+    })
+    .stack(acciWeekDayByDrinking, "酒駕", function (d) {
+      return d.value.drunk;
+    })
     .x(d3.scale.ordinal().domain(weekDayTable))
     .xUnits(dc.units.ordinal)
     .elasticY(true)
     .gap(4)
-    .colors(colorAcciScale)
+    .colors(colorDrinkingScale)
+    .colorAccessor(function (d) {
+      return d.layer || "非酒駕";
+    })
     .on("filtered", function (c, f) {
       return updateGraph();
     })
+    .legend(
+      dc.legend().x(barWk - 90).y(0).itemHeight(10).gap(5).horizontal(true)
+    )
     .yAxis()
     .ticks(4);
   barAcciHour
@@ -820,13 +903,25 @@ d3.tsv("./accidentXY_113.tsv", function (err, tsvBody) {
     .height(100)
     .margins(marginHr)
     .dimension(hourDim)
-    .group(acciHour)
+    .group(acciHourByDrinking, "非酒駕")
+    .valueAccessor(function (d) {
+      return d.value.sober;
+    })
+    .stack(acciHourByDrinking, "酒駕", function (d) {
+      return d.value.drunk;
+    })
     .x(d3.scale.linear().domain([0, 24]))
     .elasticY(true)
-    .colors(colorAcciScale)
+    .colors(colorDrinkingScale)
+    .colorAccessor(function (d) {
+      return d.layer || "非酒駕";
+    })
     .on("filtered", function (c, f) {
       return updateGraph();
     })
+    .legend(
+      dc.legend().x(barHr - 120).y(0).itemHeight(10).gap(5).horizontal(true)
+    )
     .yAxis()
     .ticks(4);
   dataTable
